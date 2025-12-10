@@ -103,12 +103,22 @@ public class EnemiesGauna : MonoBehaviour
             }
         }
 
-        // destroy spheres not connected
+        // ---------- SAFE SPHERE DESTRUCTION ----------
+        // Collect first, destroy after, so we don't modify the list while iterating it.
+        List<ExternalSphere> toDestroy = new List<ExternalSphere>();
+
         foreach (var sphere in externalSpheres)
         {
             if (sphere == null || sphere.IsDestroyed) continue;
             if (!connectedBody.Contains(sphere))
-                sphere.DestroySphere();
+                toDestroy.Add(sphere);
+        }
+
+        foreach (var sphere in toDestroy)
+        {
+            // This calls back into OnExternalSphereDestroyed → CheckConnectivity,
+            // but now we're not inside a foreach over externalSpheres anymore, so it's safe.
+            sphere.DestroySphere();
         }
 
         // 2) Tentacle segments amputated from core/body
@@ -122,6 +132,9 @@ public class EnemiesGauna : MonoBehaviour
             connectedNodes.Add(internalSphere.transform);
 
         float maxLinkDist = overlapRadius * 2f;
+
+        // ---------- SAFE TENTACLE DESTRUCTION ----------
+        List<TentacleSegment> segsToKill = new List<TentacleSegment>();
 
         foreach (var seg in allTentacleSegments)
         {
@@ -140,9 +153,16 @@ public class EnemiesGauna : MonoBehaviour
 
             if (!foundConnection)
             {
-                // segment is amputated, kill it
-                seg.TakeDamage(99999f);
+                // segment is amputated, mark it to be killed
+                segsToKill.Add(seg);
             }
+        }
+
+        // Actually kill them AFTER the iteration
+        foreach (var seg in segsToKill)
+        {
+            if (seg != null)
+                seg.TakeDamage(99999f);
         }
 
         StartRegeneration();
@@ -200,7 +220,6 @@ public class EnemiesGauna : MonoBehaviour
             return;
         }
 
-        // If the list is empty, auto-detect by some rule (optional)
         if (tentacleRoots.Count == 0)
         {
             // You could auto-add "exposed" spheres here if you want, for now do nothing.

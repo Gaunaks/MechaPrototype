@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿
+using System.Collections.Generic;
 using UnityEngine;
 using System.Collections;
 
@@ -29,7 +30,8 @@ public class TentacleRoot : MonoBehaviour
     public float smoothSpeed = 15f;
 
     [Header("Idle / Style")]
-    public float idleWobbleStrength = 0.8f;
+    // augmenté légèrement pour un balancement idle plus prononcé ; ajustez dans l'inspecteur si besoin
+    public float idleWobbleStrength = 2.0f;
     public float idleWobbleSpeed = 2.5f;
 
     // (Attack parameters kept if you want later, but not used now)
@@ -46,7 +48,7 @@ public class TentacleRoot : MonoBehaviour
     private float targetLength;       // desired length (between initialSegments and maxSegments)
     private float lastAttackTime = -999f; // unused now, but kept
 
-    // *** NEW: Regen Cooldown Logic ***
+    // Regen Cooldown Logic
     public float regenCooldown = 3.0f; // Time before a chopped tentacle can regrow
     private float lastChopTime = -999f;
 
@@ -88,12 +90,17 @@ public class TentacleRoot : MonoBehaviour
 
     void Update()
     {
-        if (segments.Count == 0)
-            return;
+        // Always update activation/target length and attempt length change (allows regrowth after full destruction)
+        if (segments == null) segments = new List<Transform>();
 
         UpdateActivation();
         UpdateTargetLength();
         ApplyLengthChange();
+
+        // If still no segments after attempted regrowth, bail out
+        if (segments.Count == 0)
+            return;
+
         AnimateTentacle();
         ApplyPositions();
     }
@@ -174,6 +181,9 @@ public class TentacleRoot : MonoBehaviour
             int toRemove = segments.Count - desiredCount;
             for (int i = 0; i < toRemove; i++)
             {
+                // ensure we never drop below initialSegments (normal length)
+                if (segments.Count <= initialSegments)
+                    break;
                 RemoveSegmentAtBase();
             }
         }
@@ -183,14 +193,17 @@ public class TentacleRoot : MonoBehaviour
 
     void AddSegmentNearBase()
     {
+        if (segmentPrefab == null) return;
+
         // spawn very close to root, at its position, so visually it looks like it grows out
         Vector3 spawnPos = transform.position;
         GameObject segObj = Instantiate(segmentPrefab, spawnPos, Quaternion.identity, transform);
 
-        // Insert at index 1 so index 0 is strictly root-adjacent, or at 0 if you prefer
+        // Insert at index 1 so index 0 is strictly root-adjacent
         int insertIndex = Mathf.Min(1, segments.Count);
         segments.Insert(insertIndex, segObj.transform);
 
+        // Keep internal arrays consistent
         positions.Insert(insertIndex, segObj.transform.position);
         originalLocalPositions.Insert(insertIndex, segObj.transform.localPosition);
 
@@ -207,6 +220,10 @@ public class TentacleRoot : MonoBehaviour
     {
         if (segments.Count <= baseSegmentCount)
             return; // keep minimal root
+
+        // Do not remove below the configured normal length (initialSegments)
+        if (segments.Count <= initialSegments)
+            return;
 
         // remove just after the root, so it visually retracts into the base
         int index = Mathf.Min(1, segments.Count - 1);
@@ -328,7 +345,7 @@ public class TentacleRoot : MonoBehaviour
     }
 
     // ----------------------------------------------------------------------
-    // DECAPITATION (unchanged logic)
+    // DECAPITATION / REGEN
     // ----------------------------------------------------------------------
     public void OnSegmentDestroyed(TentacleSegment seg)
     {
@@ -358,11 +375,29 @@ public class TentacleRoot : MonoBehaviour
                 Destroy(t.gameObject);
         }
 
-        // update currentLength so it doesn’t try to regrow instantly
+        // update internal lengths
         currentLength = segments.Count;
         targetLength = Mathf.Clamp(targetLength, initialSegments, maxSegments);
 
         // record the chop time to start regen cooldown
         lastChopTime = Time.time;
+    }
+
+    // Called by segments (they request the root to run the coroutine so it isn't started on an inactive object)
+    public IEnumerator RegenerateSegmentCoroutine(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+
+        // Respect the global regen cooldown (time since last chop)
+        float timeSinceChop = Time.time - lastChopTime;
+        if (timeSinceChop < regenCooldown)
+            yield return new WaitForSeconds(regenCooldown - timeSinceChop);
+
+        // Spawn one new segment near the base if possible
+        if (segmentPrefab != null && segments.Count < maxSegments)
+        {
+            AddSegmentNearBase();
+            EnsureArraysMatch();
+        }
     }
 }

@@ -30,7 +30,10 @@ public class Crouch : MonoBehaviour
     {
         // Try to get components.
         movement = GetComponentInParent<FirstPersonMovement>();
-        headToLower = movement.GetComponentInChildren<Camera>().transform;
+        headToLower.localPosition =
+            headToLower.localPosition.y * transform.up
+            + transform.up * crouchYHeadPosition;
+
         colliderToLower = movement.GetComponentInChildren<CapsuleCollider>();
     }
 

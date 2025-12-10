@@ -1,3 +1,4 @@
+
 using UnityEngine;
 using System.Collections;
 
@@ -37,14 +38,24 @@ public class TentacleSegment : MonoBehaviour
 
     private void DestroySegment()
     {
+        if (isDestroyed) return;
         isDestroyed = true;
-        gameObject.SetActive(false);
 
+        // If we have a root, let it handle removal/destruction and schedule regeneration there.
         if (ownerRoot != null)
+        {
+            // notify root (this may destroy the GameObject)
             ownerRoot.OnSegmentDestroyed(this);
 
-        // optional: regen later
-        StartCoroutine(RegenerateAfterDelay());
+            // schedule regeneration on the root (root is active so coroutine runs even if this GO is destroyed)
+            ownerRoot.StartCoroutine(ownerRoot.RegenerateSegmentCoroutine(regenDelay));
+        }
+        else
+        {
+            // fallback: deactivate and self-regen if no root
+            gameObject.SetActive(false);
+            StartCoroutine(RegenerateAfterDelay());
+        }
     }
 
     private IEnumerator RegenerateAfterDelay()

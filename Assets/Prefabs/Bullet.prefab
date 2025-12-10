@@ -31,7 +31,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.10862913, y: 0.08637091, z: 0.17337762}
+  m_LocalScale: {x: 0.3, y: 0.08637091, z: 0.17337762}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -115,7 +115,7 @@ Rigidbody:
   m_IsKinematic: 0
   m_Interpolate: 0
   m_Constraints: 0
-  m_CollisionDetection: 0
+  m_CollisionDetection: 2
 --- !u!114 &5009608587639810504
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -129,10 +129,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   damage: 3
-  lifeTime: 5
+  lifeTime: 15
   hitLayers:
     serializedVersion: 2
     m_Bits: 4294967295
+  ownerCollider: {fileID: 0}
+  ownerTransform: {fileID: 0}
+  debugLogs: 1
 --- !u!136 &6479867840390142774
 CapsuleCollider:
   m_ObjectHideFlags: 0
@@ -150,7 +153,7 @@ CapsuleCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 1
+  m_Enabled: 0
   serializedVersion: 2
   m_Radius: 0.44
   m_Height: 0

@@ -11,34 +11,36 @@ public class FirstPersonMovement : MonoBehaviour
     public float runSpeed = 9;
     public KeyCode runningKey = KeyCode.LeftShift;
 
-    Rigidbody rigidbody;
-    /// <summary> Functions to override movement speed. Will use the last added override. </summary>
+    Rigidbody rb;
     public List<System.Func<float>> speedOverrides = new List<System.Func<float>>();
 
-
+    [HideInInspector] public bool isFlyingExternally = false; // <-- ADDED
 
     void Awake()
     {
-        // Get the rigidbody on this.
-        rigidbody = GetComponent<Rigidbody>();
+        rb = GetComponent<Rigidbody>();
     }
 
     void FixedUpdate()
     {
-        // Update IsRunning from input.
+        // 🚫 If the flight script controls movement => DO NOT TOUCH VELOCITY
+        if (isFlyingExternally) return;
+
+        // Normal on-ground FPS movement:
         IsRunning = canRun && Input.GetKey(runningKey);
 
-        // Get targetMovingSpeed.
-        float targetMovingSpeed = IsRunning ? runSpeed : speed;
+        float targetSpeed = IsRunning ? runSpeed : speed;
         if (speedOverrides.Count > 0)
-        {
-            targetMovingSpeed = speedOverrides[speedOverrides.Count - 1]();
-        }
+            targetSpeed = speedOverrides[speedOverrides.Count - 1]();
 
-        // Get targetVelocity from input.
-        Vector2 targetVelocity =new Vector2( Input.GetAxis("Horizontal") * targetMovingSpeed, Input.GetAxis("Vertical") * targetMovingSpeed);
+        Vector2 input = new Vector2(
+            Input.GetAxis("Horizontal") * targetSpeed,
+            Input.GetAxis("Vertical") * targetSpeed
+        );
 
-        // Apply movement.
-        rigidbody.linearVelocity = transform.rotation * new Vector3(targetVelocity.x, rigidbody.linearVelocity.y, targetVelocity.y);
+        Vector3 velocity =
+            transform.rotation * new Vector3(input.x, rb.linearVelocity.y, input.y);
+
+        rb.linearVelocity = velocity;
     }
 }
