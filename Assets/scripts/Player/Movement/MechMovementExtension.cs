@@ -9,61 +9,51 @@ public class MechMovementExtensions : MonoBehaviour
     Camera cam;
     GroundCheck ground;
 
-    [Header("Dash")]
+    [Header("Dash (Double Tap)")]
     public KeyCode dashKey = KeyCode.LeftShift;
     public float dashForce = 40f;
     public float dashEnergyCostPerSecond = 30f;
     public float dashDrag = 0.5f; // temporary drag during dash
-    bool isDashing = false;
+    [Tooltip("Délai maximum entre deux appuis pour valider un Dash")]
+    public float doubleTapTimeWindow = 0.3f;
+    
+    private bool isDashing = false;
+    private float lastTapTime = -1f;
 
     [Header("Flight (Sidonia-style rocket)")]
     [Tooltip("Max horizontal flight speed (m/s)")]
     public float maxFlightSpeed = 90f;
-    [Tooltip("Base 'thrust' acceleration in m/s^2 (spool multiplies this)")]
+    [Tooltip("Base 'thrust' acceleration in m/s^2")]
     public float baseFlightAcceleration = 80f;
-    [Tooltip("How quickly the spool multiplier grows (higher = faster spool)")]
     public float accelerationRampPerSecond = 35f;
-    [Tooltip("Top multiplier applied to base acceleration after spool-up")]
     public float maxAccelerationMultiplier = 4f;
-    [Tooltip("Reduces vertical influence of camera direction (0..1)")]
     public float verticalAccelFactor = 0.75f;
     public float flightEnergyCostPerSecond = 40f;
+    
+    [Tooltip("Seuil pour déclencher le vol quand on regarde en l'air")]
     public float upwardLookThreshold = 0.15f;
 
     [Header("Micro-thrusters / caps")]
-    [Tooltip("Maximum lateral (micro-thruster) accel m/s^2 for quick course correction")]
     public float microThrusterAccel = 250f;
-    [Tooltip("Maximum allowed change in horizontal speed per second (soft cap)")]
     public float horizontalAccelCap = 120f;
-    [Tooltip("Maximum vertical accel m/s^2")]
     public float verticalAccelCap = 80f;
-    [Tooltip("Maximum vertical speed m/s")]
     public float maxVerticalSpeed = 40f;
 
     [Header("Steering & alignment")]
-    [Tooltip("How strongly mech aligns its facing/yaw to the camera while flying (deg/sec)")]
     public float yawAlignSpeed = 720f;
-    [Tooltip("How quickly thrustDirection rotates toward desired thrust (higher = less drift)")]
     public float thrustDirectionCatchupSpeed = 3.5f;
-    [Tooltip("Quick lateral steering factor from player inputs (adds micro-thruster influence)")]
     public float directionalInfluence = 28f;
 
     [Header("Flight Smoothing")]
     public float camSmoothing = 10f;
     public float pitchDeadzone = 0.08f;
 
-    [Header("Power boost presets (optional)")]
-    [Tooltip("Max forward thrust (m/s^2) — limits the main thrust magnitude")]
+    [Header("Power boost presets")]
     public float maxForwardThrust = 350f;
-    [Tooltip("Max lateral thrust (m/s^2) — micro thruster cap")]
     public float maxSideThrust = 150f;
-    [Tooltip("Max upward thrust (m/s^2)")]
     public float maxUpThrust = 150f;
-    [Tooltip("Controls how quickly inertia is damped (higher = faster damping)")]
     public float inertiaDampSpeed = 4f;
-    [Tooltip("How snappy thrust direction catches camera (higher = less drift)")]
     public float directionSnappiness = 9f;
-    [Tooltip("Absolute safety cap for total speed (m/s)")]
     public float absoluteMaxSpeed = 150f;
 
     [Header("Tuner")]
@@ -79,10 +69,9 @@ public class MechMovementExtensions : MonoBehaviour
     [SerializeField, HideInInspector] private float refDirectionalInfluence = 28f;
 
     bool isFlying = false;
-    float currentAccelMultiplier = 1f; // spool-up (1..maxAccelerationMultiplier)
+    float currentAccelMultiplier = 1f;
     Vector3 smoothedCamDir;
-    Vector3 thrustDirection; // persistent thrust vector (world-space)
-
+    Vector3 thrustDirection;
     float lastFlightPowerSlider = -1f;
 
     [Header("Hover (Space in mid-air)")]
@@ -98,10 +87,11 @@ public class MechMovementExtensions : MonoBehaviour
     float originalDrag;
     bool gravityWasEnabled = true;
 
-    [Header("Visual Roll")]
-    public Transform visualsTransform = null; // recommended: child model root
-    public float maxRollAngle = 35f;
-    public float rollSpeed = 8f;
+    [Header("Camera & Visual Roll")]
+    public Transform visualsTransform = null;
+    [Tooltip("Maximum Roll in degrees when pressing Q/D keys in flight")]
+    public float maxRollAngle = 45f;
+    public float rollSpeed = 6f;
     float currentRoll = 0f;
     float targetRoll = 0f;
 
@@ -123,7 +113,6 @@ public class MechMovementExtensions : MonoBehaviour
 
         thrustDirection = transform.forward;
 
-        // init ref values if zero
         refMaxFlightSpeed = Mathf.Approximately(refMaxFlightSpeed, 0f) ? maxFlightSpeed : refMaxFlightSpeed;
         refBaseFlightAcceleration = Mathf.Approximately(refBaseFlightAcceleration, 0f) ? baseFlightAcceleration : refBaseFlightAcceleration;
         refHorizontalAccelCap = Mathf.Approximately(refHorizontalAccelCap, 0f) ? horizontalAccelCap : refHorizontalAccelCap;
@@ -140,6 +129,14 @@ public class MechMovementExtensions : MonoBehaviour
 
     void Update()
     {
+        bool airborne = (ground == null || !ground.isGrounded);
+
+        if (movement != null)
+        {
+            // Le script FPS normal prend le relais si on n'est ni en vol, ni en hover, ni en plein dash
+            movement.enabled = !isFlying && !isHovering && !isDashing;
+        }
+
         if (autoTuneFromSlider && !Mathf.Approximately(lastFlightPowerSlider, flightPowerSlider))
         {
             ApplyFlightTuner();
@@ -151,7 +148,7 @@ public class MechMovementExtensions : MonoBehaviour
         HandleHover();
         RestoreStatesIfNeeded();
 
-        if (ground != null && !ground.isGrounded)
+        if (airborne)
         {
             if (!Input.GetKey(KeyCode.Space))
                 spaceReleasedSinceGrounded = true;
@@ -160,8 +157,11 @@ public class MechMovementExtensions : MonoBehaviour
         {
             spaceReleasedSinceGrounded = false;
         }
+    }
 
-        UpdateVisualRoll();
+    void LateUpdate()
+    {
+        UpdateCameraAndVisualRoll();
     }
 
     void OnValidate()
@@ -211,15 +211,45 @@ public class MechMovementExtensions : MonoBehaviour
             return;
         }
 
-        if (Input.GetKeyDown(dashKey) && !isFlying)
+        // --- GESTION DU DOUBLE TAP ---
+        if (Input.GetKeyDown(dashKey))
         {
-            if (energy.TryUse(dashEnergyCostPerSecond * 0.2f))
+            if (Time.time - lastTapTime <= doubleTapTimeWindow && !isFlying)
             {
-                rb.AddForce(transform.forward * dashForce, ForceMode.VelocityChange);
-                StartDash();
+                // Un Double-Tap a été détecté ! On éxécute le code de propulsion
+                if (energy.TryUse(dashEnergyCostPerSecond * 0.2f))
+                {
+                    Vector2 input = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")).normalized;
+                    Vector3 dashDirection = Vector3.zero;
+
+                    if (input.magnitude > 0.1f && cam != null)
+                    {
+                        dashDirection = cam.transform.right * input.x + cam.transform.forward * input.y;
+                        dashDirection.y = 0;
+                        dashDirection.Normalize();
+                    }
+                    else
+                    {
+                        Vector3 forwardDir = cam != null ? cam.transform.forward : transform.forward;
+                        forwardDir.y = 0;
+                        dashDirection = forwardDir.normalized;
+                    }
+
+                    rb.AddForce(dashDirection * dashForce, ForceMode.VelocityChange);
+                    StartDash();
+                }
+                
+                // On réinitialise pour éviter de spam en boucle sur 3 ou 4 clics
+                lastTapTime = -1f; 
+            }
+            else
+            {
+                // Enregistre l'heure du premier clic
+                lastTapTime = Time.time;
             }
         }
 
+        // On vérifie que la touche est maintenue si l'on veut consommer de l'énergie en prolongeant le slide 
         if (Input.GetKey(dashKey) && isDashing)
         {
             if (!energy.TryUse(dashEnergyCostPerSecond * Time.deltaTime))
@@ -253,17 +283,15 @@ public class MechMovementExtensions : MonoBehaviour
 
         bool isAirborne = (ground == null || !ground.isGrounded);
 
-        // Smooth camera direction
         Vector3 rawCamDir = cam.transform.forward.normalized;
         smoothedCamDir = Vector3.Slerp(smoothedCamDir, rawCamDir, Mathf.Clamp01(Time.deltaTime * camSmoothing));
 
         float verticalDot = Mathf.Clamp(Vector3.Dot(smoothedCamDir, Vector3.up), -1f, 1f);
         if (Mathf.Abs(verticalDot) < pitchDeadzone) verticalDot = 0f;
 
-        // START flight: hold dash + W + airborne + look upwards
+        // START VOL : Saut + Maintient du bouton (Shift) + Regarder en l'air 
         bool canStartFlight =
             Input.GetKey(dashKey) &&
-            Input.GetKey(KeyCode.W) &&
             isAirborne &&
             verticalDot > upwardLookThreshold;
 
@@ -282,8 +310,6 @@ public class MechMovementExtensions : MonoBehaviour
 
         if (!isFlying) return;
 
-        // CONTINUE / STOP flight:
-        // 👉 We no longer require W to be held.
         if (!Input.GetKey(dashKey) || !isAirborne ||
             (energy != null && !energy.TryUse(flightEnergyCostPerSecond * Time.deltaTime)))
         {
@@ -305,7 +331,6 @@ public class MechMovementExtensions : MonoBehaviour
         );
         thrustDirection.Normalize();
 
-        // spool-up
         currentAccelMultiplier += accelerationRampPerSecond * Time.deltaTime / Mathf.Max(0.0001f, baseFlightAcceleration);
         currentAccelMultiplier = Mathf.Clamp(currentAccelMultiplier, 1f, maxAccelerationMultiplier);
 
@@ -313,15 +338,13 @@ public class MechMovementExtensions : MonoBehaviour
         thrustAccel = Mathf.Min(thrustAccel, maxForwardThrust);
 
         rb.AddForce(thrustDirection * thrustAccel, ForceMode.Acceleration);
-
         rb.AddForce(-Physics.gravity * 1.05f, ForceMode.Acceleration);
 
         Vector3 currentVel = rb.linearVelocity;
         Vector3 currentHoriz = Vector3.ProjectOnPlane(currentVel, Vector3.up);
         Vector3 desiredHorizVel = Vector3.ProjectOnPlane(desiredThrustDir, Vector3.up) * maxFlightSpeed;
 
-        Vector3 inputDir = cam.transform.right * Input.GetAxis("Horizontal") +
-                           cam.transform.forward * Input.GetAxis("Vertical");
+        Vector3 inputDir = cam.transform.forward * Input.GetAxis("Vertical");
 
         Vector3 inputHoriz = Vector3.ProjectOnPlane(inputDir, Vector3.up);
         if (inputHoriz.sqrMagnitude > 0.0001f) inputHoriz.Normalize();
@@ -380,7 +403,6 @@ public class MechMovementExtensions : MonoBehaviour
         currentAccelMultiplier = 1f;
         rb.linearDamping = originalDrag;
         EnsureGravityEnabled();
-        targetRoll = 0f;
     }
 
     // -------------------------------
@@ -452,45 +474,31 @@ public class MechMovementExtensions : MonoBehaviour
     }
 
     // -------------------------------
-    // Visual roll (only in air)
-    void UpdateVisualRoll()
+    // Roulis Physique et Visuel NOUVEAU
+    void UpdateCameraAndVisualRoll()
     {
-        if (visualsTransform == null) return;
-
-        bool airborne = (ground == null || !ground.isGrounded);
-
-        if (!airborne)
+        if (!isFlying)
         {
-            // reset roll on ground
-            currentRoll = Mathf.Lerp(currentRoll, 0f, Time.deltaTime * rollSpeed);
-            Vector3 e = visualsTransform.localEulerAngles;
-            visualsTransform.localEulerAngles = new Vector3(
-                NormalizeAngle(e.x),
-                NormalizeAngle(e.y),
-                currentRoll
-            );
-            return;
+            targetRoll = 0f;
+        }
+        else
+        {
+            float yawInput = Input.GetAxis("Horizontal");
+            targetRoll = -yawInput * maxRollAngle;
         }
 
-        // Only roll from horizontal input while in air (flying / falling / jumping / hovering)
-        float yawInput = Input.GetAxis("Horizontal");
-        float desiredRoll = -yawInput * maxRollAngle;
-
-        targetRoll = desiredRoll;
         currentRoll = Mathf.Lerp(currentRoll, targetRoll, Time.deltaTime * rollSpeed);
 
-        Vector3 rot = visualsTransform.localEulerAngles;
-        visualsTransform.localEulerAngles = new Vector3(
-            NormalizeAngle(rot.x),
-            NormalizeAngle(rot.y),
-            currentRoll
-        );
-    }
+        if (visualsTransform != null)
+        {
+            Vector3 rot = visualsTransform.localEulerAngles;
+            visualsTransform.localEulerAngles = new Vector3(rot.x, rot.y, currentRoll);
+        }
 
-    // Helper to keep angles in [-180, 180]
-    float NormalizeAngle(float a)
-    {
-        a = Mathf.Repeat(a + 180f, 360f) - 180f;
-        return a;
+        if (cam != null)
+        {
+            Vector3 camRot = cam.transform.localEulerAngles;
+            cam.transform.localEulerAngles = new Vector3(camRot.x, camRot.y, currentRoll);
+        }
     }
 }

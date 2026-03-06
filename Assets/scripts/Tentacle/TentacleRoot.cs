@@ -1,5 +1,4 @@
-﻿
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 using System.Collections;
 
@@ -30,9 +29,21 @@ public class TentacleRoot : MonoBehaviour
     public float smoothSpeed = 15f;
 
     [Header("Idle / Style")]
-    // augmenté légèrement pour un balancement idle plus prononcé ; ajustez dans l'inspecteur si besoin
     public float idleWobbleStrength = 2.0f;
     public float idleWobbleSpeed = 2.5f;
+
+    [Header("Repulsion & Personality (Anti-Overlap)")]
+    [Tooltip("How strongly it pushes away from other tentacles")]
+    public float repulsionStrength = 5f;
+    [Tooltip("The minimum comfortable distance between two tentacle segments")]
+    public float repulsionRadius = 1.2f;
+    [Tooltip("Adds random offset to the target so they don't aim at the exact same pixel")]
+    public float targetSpreadRandomness = 1.5f; 
+    
+    // Personality variables
+    private Vector3 targetOffsetSpread; 
+    private float randomTimeOffset;
+    private float wobbleSpeedMultiplier;
 
     // (Attack parameters kept if you want later, but not used now)
     [Header("Attack (currently not used for dash)")]
@@ -44,12 +55,12 @@ public class TentacleRoot : MonoBehaviour
     private List<Vector3> originalLocalPositions = new List<Vector3>();
 
     private bool activeToTarget = false;
-    private float currentLength;      // current float length (segment count as a float)
-    private float targetLength;       // desired length (between initialSegments and maxSegments)
-    private float lastAttackTime = -999f; // unused now, but kept
+    private float currentLength;      
+    private float targetLength;       
+    private float lastAttackTime = -999f; 
 
     // Regen Cooldown Logic
-    public float regenCooldown = 3.0f; // Time before a chopped tentacle can regrow
+    public float regenCooldown = 3.0f; 
     private float lastChopTime = -999f;
 
     // ----------------------------------------------------------------------
@@ -57,7 +68,11 @@ public class TentacleRoot : MonoBehaviour
     // ----------------------------------------------------------------------
     void Start()
     {
-        // If no segments in inspector, build a simple chain
+        // Setup random personality for this specific tentacle
+        targetOffsetSpread = Random.onUnitSphere * targetSpreadRandomness;
+        randomTimeOffset = Random.Range(0f, 100f); // Décalage dans le temps pour briser la synchro
+        wobbleSpeedMultiplier = Random.Range(0.8f, 1.2f); // Légères variations de vitesse (+/- 20%)
+
         if (segments.Count == 0 && segmentPrefab != null)
         {
             for (int i = 0; i < initialSegments; i++)
@@ -90,14 +105,12 @@ public class TentacleRoot : MonoBehaviour
 
     void Update()
     {
-        // Always update activation/target length and attempt length change (allows regrowth after full destruction)
         if (segments == null) segments = new List<Transform>();
 
         UpdateActivation();
         UpdateTargetLength();
         ApplyLengthChange();
 
-        // If still no segments after attempted regrowth, bail out
         if (segments.Count == 0)
             return;
 
@@ -135,40 +148,29 @@ public class TentacleRoot : MonoBehaviour
 
     void UpdateTargetLength()
     {
-        // When active → we want full length
-        // When inactive → we want initial length
         float desired = activeToTarget ? maxSegments : initialSegments;
         targetLength = Mathf.Clamp(desired, initialSegments, maxSegments);
 
-        // Smoothly approach targetLength (so expansion is one continuous motion)
         currentLength = Mathf.MoveTowards(currentLength, targetLength, lengthChangeSpeed * Time.deltaTime);
         currentLength = Mathf.Clamp(currentLength, initialSegments, maxSegments);
     }
 
     void ApplyLengthChange()
     {
-        // we want number of physical segments = rounded currentLength
         int desiredCount = Mathf.RoundToInt(currentLength);
         desiredCount = Mathf.Clamp(desiredCount, initialSegments, maxSegments);
 
         if (segmentPrefab == null)
             return;
 
-        // If we're inside the regen cooldown, prevent adding segments (no regrowth)
         if (desiredCount > segments.Count)
         {
             float timeSinceChop = Time.time - lastChopTime;
-            if (timeSinceChop < regenCooldown)
-            {
-                // still cooling down — skip any growth until cooldown passes
-                return;
-            }
+            if (timeSinceChop < regenCooldown) return;
         }
 
-        // Add or remove segments to match desiredCount
         if (desiredCount > segments.Count)
         {
-            // need more segments
             int toAdd = desiredCount - segments.Count;
             for (int i = 0; i < toAdd; i++)
             {
@@ -177,13 +179,10 @@ public class TentacleRoot : MonoBehaviour
         }
         else if (desiredCount < segments.Count)
         {
-            // need fewer segments
             int toRemove = segments.Count - desiredCount;
             for (int i = 0; i < toRemove; i++)
             {
-                // ensure we never drop below initialSegments (normal length)
-                if (segments.Count <= initialSegments)
-                    break;
+                if (segments.Count <= initialSegments) break;
                 RemoveSegmentAtBase();
             }
         }
@@ -195,15 +194,12 @@ public class TentacleRoot : MonoBehaviour
     {
         if (segmentPrefab == null) return;
 
-        // spawn very close to root, at its position, so visually it looks like it grows out
         Vector3 spawnPos = transform.position;
         GameObject segObj = Instantiate(segmentPrefab, spawnPos, Quaternion.identity, transform);
 
-        // Insert at index 1 so index 0 is strictly root-adjacent
         int insertIndex = Mathf.Min(1, segments.Count);
         segments.Insert(insertIndex, segObj.transform);
 
-        // Keep internal arrays consistent
         positions.Insert(insertIndex, segObj.transform.position);
         originalLocalPositions.Insert(insertIndex, segObj.transform.localPosition);
 
@@ -218,14 +214,9 @@ public class TentacleRoot : MonoBehaviour
 
     void RemoveSegmentAtBase()
     {
-        if (segments.Count <= baseSegmentCount)
-            return; // keep minimal root
+        if (segments.Count <= baseSegmentCount) return;
+        if (segments.Count <= initialSegments) return;
 
-        // Do not remove below the configured normal length (initialSegments)
-        if (segments.Count <= initialSegments)
-            return;
-
-        // remove just after the root, so it visually retracts into the base
         int index = Mathf.Min(1, segments.Count - 1);
         Transform removed = segments[index];
 
@@ -249,10 +240,10 @@ public class TentacleRoot : MonoBehaviour
 
         EnsureArraysMatch();
 
-        // root anchored
+        // 1. Root anchored
         positions[0] = transform.position;
 
-        // base segments: cling to original local positions (like a shoulder)
+        // 2. Base segments cling
         for (int i = 1; i < Mathf.Min(baseSegmentCount, segments.Count); i++)
         {
             Vector3 goal = transform.TransformPoint(originalLocalPositions[i]);
@@ -262,41 +253,99 @@ public class TentacleRoot : MonoBehaviour
         int last = segments.Count - 1;
         Vector3 desiredTip = positions[last];
 
-        // main behavior: if active, reach toward target; else relax toward original shape
+        // 3. TARGETING
         if (target != null && activeToTarget)
         {
             Vector3 root = transform.position;
-            Vector3 toTarget = target.position - root;
+            Vector3 targetFocusPoint = target.position + targetOffsetSpread; 
+            Vector3 toTarget = targetFocusPoint - root;
             float maxReach = segmentSpacing * (segments.Count - 1);
 
             if (toTarget.magnitude > maxReach)
                 desiredTip = root + toTarget.normalized * maxReach;
             else
-                desiredTip = target.position;
+                desiredTip = targetFocusPoint;
         }
         else
         {
-            // retract into original rest positions
             for (int i = baseSegmentCount; i < segments.Count; i++)
             {
                 Vector3 goal = transform.TransformPoint(originalLocalPositions[Mathf.Min(i, originalLocalPositions.Count - 1)]);
                 positions[i] = Vector3.Lerp(positions[i], goal, Time.deltaTime * smoothSpeed);
             }
-
             desiredTip = positions[last];
         }
 
-        // smooth tip
+        // 4. Smooth tip
         positions[last] = Vector3.Lerp(positions[last], desiredTip, Time.deltaTime * reachSpeed);
 
-        // backward pass: keep spacing
+        // 5. BODY REPULSION
+        if (ownerGauna != null)
+        {
+            float bodyRepulsionRadius = repulsionRadius * 1.5f;
+
+            for (int i = baseSegmentCount; i <= last; i++)
+            {
+                Vector3 repulsionVector = Vector3.zero;
+                Vector3 myPos = positions[i];
+
+                foreach (var otherSeg in ownerGauna.allTentacleSegments)
+                {
+                    if (otherSeg == null) continue;
+                    if (otherSeg.ownerRoot == this) continue; 
+
+                    Vector3 dirToOther = myPos - otherSeg.transform.position;
+                    float sqrDist = dirToOther.sqrMagnitude;
+
+                    if (sqrDist < (repulsionRadius * repulsionRadius) && sqrDist > 0.001f)
+                    {
+                        float dist = Mathf.Sqrt(sqrDist);
+                        float pushForce = (repulsionRadius - dist) / repulsionRadius;
+                        repulsionVector += dirToOther.normalized * pushForce;
+                    }
+                }
+
+                foreach (var extSphere in ownerGauna.externalSpheres)
+                {
+                    if (extSphere == null || extSphere.IsDestroyed) continue;
+
+                    Vector3 dirToSphere = myPos - extSphere.transform.position;
+                    float sqrDist = dirToSphere.sqrMagnitude;
+
+                    if (sqrDist < (bodyRepulsionRadius * bodyRepulsionRadius) && sqrDist > 0.001f)
+                    {
+                        float dist = Mathf.Sqrt(sqrDist);
+                        float pushForce = ((bodyRepulsionRadius - dist) / bodyRepulsionRadius) * 1.5f; 
+                        repulsionVector += dirToSphere.normalized * pushForce;
+                    }
+                }
+
+                if (ownerGauna.internalSphere != null)
+                {
+                    Vector3 dirToCore = myPos - ownerGauna.internalSphere.transform.position;
+                    float sqrDist = dirToCore.sqrMagnitude;
+                    
+                    if (sqrDist < (bodyRepulsionRadius * bodyRepulsionRadius) && sqrDist > 0.001f)
+                    {
+                        float dist = Mathf.Sqrt(sqrDist);
+                        float pushForce = ((bodyRepulsionRadius - dist) / bodyRepulsionRadius) * 2f; 
+                        repulsionVector += dirToCore.normalized * pushForce;
+                    }
+                }
+
+                positions[i] += repulsionVector * (repulsionStrength * Time.deltaTime);
+            }
+        }
+
+
+        // 6. BACKWARD PASS (Keep spacing constraints)
         for (int i = last - 1; i >= 1; i--)
         {
             Vector3 dir = (positions[i] - positions[i + 1]).normalized;
             positions[i] = positions[i + 1] + dir * segmentSpacing;
         }
 
-        // forward pass from root
+        // 7. FORWARD PASS (Keep spacing constraints from root)
         positions[0] = transform.position;
         for (int i = 1; i < segments.Count; i++)
         {
@@ -304,11 +353,15 @@ public class TentacleRoot : MonoBehaviour
             positions[i] = positions[i - 1] + dir * segmentSpacing;
         }
 
-        // Idle wobble (stronger toward tip)
-        float time = Time.time * idleWobbleSpeed;
+        // 8. IDLE WOBBLE WITH RANDOM OFFSET
+        // Ajout du mix de variables de "personnalité" pour briser la synchronisation :
+        float time = (Time.time + randomTimeOffset) * (idleWobbleSpeed * wobbleSpeedMultiplier);
+        
         for (int i = baseSegmentCount; i < segments.Count; i++)
         {
             float factor = i / (float)Mathf.Max(1, segments.Count - 1);
+            
+            // Les ondes sont déformées différemment pour ce tentacule
             Vector3 wobble = new Vector3(
                 Mathf.Sin(time + i * 0.35f),
                 Mathf.Cos(time * 0.9f + i * 0.27f),
@@ -326,7 +379,6 @@ public class TentacleRoot : MonoBehaviour
             Vector3 cur = segments[i].position;
             Vector3 goal = positions[i];
 
-            // slightly damped to keep motion smooth
             segments[i].position = Vector3.Lerp(cur, goal, Time.deltaTime * segmentSpawnLerpSpeed);
 
             if (i > 0)
@@ -357,7 +409,6 @@ public class TentacleRoot : MonoBehaviour
         int index = segments.IndexOf(seg.transform);
         if (index < 0) return;
 
-        // remove this segment and everything AFTER it (toward the tip)
         for (int i = segments.Count - 1; i >= index; i--)
         {
             Transform t = segments[i];
@@ -367,33 +418,25 @@ public class TentacleRoot : MonoBehaviour
                 ownerGauna.allTentacleSegments.Remove(ts);
 
             segments.RemoveAt(i);
-
             if (i < positions.Count) positions.RemoveAt(i);
             if (i < originalLocalPositions.Count) originalLocalPositions.RemoveAt(i);
 
-            if (t != null)
-                Destroy(t.gameObject);
+            if (t != null) Destroy(t.gameObject);
         }
 
-        // update internal lengths
         currentLength = segments.Count;
         targetLength = Mathf.Clamp(targetLength, initialSegments, maxSegments);
-
-        // record the chop time to start regen cooldown
         lastChopTime = Time.time;
     }
 
-    // Called by segments (they request the root to run the coroutine so it isn't started on an inactive object)
     public IEnumerator RegenerateSegmentCoroutine(float delay)
     {
         yield return new WaitForSeconds(delay);
 
-        // Respect the global regen cooldown (time since last chop)
         float timeSinceChop = Time.time - lastChopTime;
         if (timeSinceChop < regenCooldown)
             yield return new WaitForSeconds(regenCooldown - timeSinceChop);
 
-        // Spawn one new segment near the base if possible
         if (segmentPrefab != null && segments.Count < maxSegments)
         {
             AddSegmentNearBase();
