@@ -1287,6 +1287,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: -7511558181221131132, guid: df3f07283842c864abb844da441c0bf8, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 7e7c1129d886c8c43b77e6ec7575adf7, type: 2}
     - target: {fileID: 919132149155446097, guid: df3f07283842c864abb844da441c0bf8, type: 3}
       propertyPath: m_Name
       value: Spear1h
@@ -3880,7 +3884,6 @@ MonoBehaviour:
   throwSpawnForwardOffset: 0.5
   aimLocalRotation: {x: 90, y: 0, z: 0}
   aimTransitionSpeed: 10
-  throwDetectionRadius: 0.5
 --- !u!54 &1744156386
 Rigidbody:
   m_ObjectHideFlags: 0

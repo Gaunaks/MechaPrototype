@@ -36,10 +36,6 @@ public class SpearScript : MonoBehaviour
     public Vector3 aimLocalRotation = new Vector3(90, 0, 0); 
     public float aimTransitionSpeed = 10f; // Vitesse pour tourner l'arme vers la pose de visée
 
-    [Header("Throw Physics Settings")]
-    [Tooltip("L'épaisseur (Rayon) de la détection anti-tunneling pendant le lancer")]
-    public float throwDetectionRadius = 0.5f;
-
     private Rigidbody rb;
     private Collider col;
     private Camera mainCam;
@@ -104,7 +100,7 @@ public class SpearScript : MonoBehaviour
                     transform.rotation = velocityRotation * Quaternion.Euler(aimLocalRotation);
                 }
                 
-                CheckSphereCastForCore();
+                CheckRaycastForCore();
                 break;
         }
     }
@@ -191,40 +187,43 @@ public class SpearScript : MonoBehaviour
     {
         currentState = SpearState.Thrusting;
 
-        // Lors de l'estoc, on part du principe que l'arme est bien placée localement
-        // Assurons-nous au moins qu'elle est droite via startLocalPos / Rot
-        transform.localPosition = startLocalPos;
-        transform.localRotation = startLocalRot;
-
         Vector3 targetPos = startLocalPos + Vector3.forward * thrustDistance;
+        Quaternion targetRot = Quaternion.Euler(aimLocalRotation); // Orientation horizontale d'attaque
         
-        RaycastHit[] hits = Physics.SphereCastAll(mainCam.transform.position, throwDetectionRadius * 0.5f, mainCam.transform.forward, thrustDistance + 1f);
+        // Raycast simple, rectiligne et fin depuis l'écran, pas un "SphereCast géant" qui touche trop
+        RaycastHit[] hits = Physics.RaycastAll(mainCam.transform.position, mainCam.transform.forward, thrustDistance + 1f);
         
         foreach (var hit in hits)
         {
             if (originalPlayerObject != null && hit.collider.transform.root.gameObject == originalPlayerObject)
                 continue;
 
+            // false = on signale que c'est une attaque de mêlée, et donc on ne force *pas* le Release de l'arme
             if (ProcessHit(hit.collider, false)) break; 
         }
 
+        // Animation d'aller (coup) : on combine recul et rotation vers l'horizontale
         float t = 0;
         while (t < 1f)
         {
             t += Time.deltaTime * thrustSpeed;
             transform.localPosition = Vector3.Lerp(startLocalPos, targetPos, t);
+            transform.localRotation = Quaternion.Slerp(startLocalRot, targetRot, t * 1.5f); // Tourne très vite
             yield return null;
         }
 
+        // Animation de retour : l'arme revient et se redresse
         t = 0;
         while (t < 1f)
         {
             t += Time.deltaTime * thrustSpeed * 0.8f; 
             transform.localPosition = Vector3.Lerp(targetPos, startLocalPos, t);
+            transform.localRotation = Quaternion.Slerp(targetRot, startLocalRot, t * 1.2f); // Revient vite
             yield return null;
         }
 
         transform.localPosition = startLocalPos;
+        transform.localRotation = startLocalRot;
         currentState = SpearState.Equipped;
     }
 
@@ -253,11 +252,7 @@ public class SpearScript : MonoBehaviour
         if (mainCam != null)
         {
             transform.forward = mainCam.transform.forward; 
-            
-            // On s'assure qu'elle débute avec la même rotation au lieu d'un simple "cam.forward" 
-            // pour éviter un "à-coup" visuel.
             transform.rotation = Quaternion.LookRotation(mainCam.transform.forward) * Quaternion.Euler(aimLocalRotation);
-            
             transform.position += mainCam.transform.forward * throwSpawnForwardOffset;
             rb.linearVelocity = mainCam.transform.forward * force; 
         }
@@ -272,14 +267,17 @@ public class SpearScript : MonoBehaviour
     // GESTION DES IMPACTS
     // -------------------------------------------------------------
 
-    void CheckSphereCastForCore()
+    void CheckRaycastForCore()
     {
         if (currentState != SpearState.Thrown) return;
 
         float lookAhead = (rb.linearVelocity.magnitude * Time.deltaTime) + 1.5f; 
         if (lookAhead < 0.1f) return;
 
-        RaycastHit[] hits = Physics.SphereCastAll(transform.position, throwDetectionRadius, rb.linearVelocity.normalized, lookAhead);
+        // Remplacé SphereCastAll par un RaycastAll (trait fin et précis) !
+        // Si vous tirez à côté de l'armure mais frôlez de 1 millimètre, ça ne passera plus "à travers" aussi injustement qu'avant.
+        // Il faut désormais qu'en ligne DOITE depuis la pointe de la lance, l'InternalSphere soit touché ou visé.
+        RaycastHit[] hits = Physics.RaycastAll(transform.position, rb.linearVelocity.normalized, lookAhead);
         
         foreach (var hit in hits)
         {
@@ -294,6 +292,10 @@ public class SpearScript : MonoBehaviour
                 ProcessHit(hit.collider, true);
                 break;
             }
+            
+            // Si le raycast touche une armure AVANT de toucher le core (et ne l'a pas encore touché), 
+            // le comportement naturel de OnCollisionEnter prendra le relai à la fin de la frame. 
+            // On ne peut de toute façon pas tuer le monstre si la carapace est devant, le OnCollisionEnter va l'arrêter avant qu'elle ne l'atteigne !
         }
     }
 
@@ -328,11 +330,15 @@ public class SpearScript : MonoBehaviour
         {
             EnemiesGauna gauna = core.GetComponentInParent<EnemiesGauna>();
             
-            transform.SetParent(null);
-            ForceRelease(); 
-            
-            currentState = SpearState.OnGround;
-            rb.linearVelocity = Vector3.zero;
+            if (isThrown)
+            {
+                // Uniquement si lancée, on la force à la désincruster de l'ennemi pour qu'elle puisse repop sur le sol sans se faire delete par sa mort
+                transform.SetParent(null);
+                ForceRelease(); 
+                currentState = SpearState.OnGround;
+                rb.linearVelocity = Vector3.zero;
+            }
+            // Si ce n'est PAS "isThrown" (donc un corps à corps), la lance va rester sagement équipée dans la main parentée !
 
             if (gauna != null) 
             {
