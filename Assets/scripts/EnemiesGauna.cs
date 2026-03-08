@@ -35,6 +35,8 @@ public class EnemiesGauna : MonoBehaviour
     [HideInInspector] public List<TentacleRoot> tentacles = new List<TentacleRoot>();
     [HideInInspector] public List<TentacleSegment> allTentacleSegments = new List<TentacleSegment>();
 
+    private bool isDead = false;
+
     private void Awake()
     {
         if (externalSpheres.Count == 0)
@@ -59,16 +61,83 @@ public class EnemiesGauna : MonoBehaviour
         SpawnTentaclesAtRoots();
     }
 
-    private void Update()
+    // ----------------------------------------------------------------------
+    //  DEATH / DISSOLVE
+    // ----------------------------------------------------------------------
+    public void KillGauna()
     {
-        // could have global logic here if needed later
+        if (isDead) return;
+        isDead = true;
+
+        // Arrête les routines de régénération
+        autoRegenerate = false;
+        if (regenRoutine != null) StopCoroutine(regenRoutine);
+        
+        // Empêche les tentacules de bouger/attaquer
+        foreach (var root in tentacles)
+        {
+            if (root != null) root.enabled = false;
+        }
+
+        // On lance la dissolution sur tous les composants corporels. 
+        // Heureusement, ExternalSphere a DEJA la logique StartDissolve!
+        foreach (var sphere in externalSpheres)
+        {
+            if (sphere != null && !sphere.IsDestroyed)
+            {
+                sphere.StartDissolve(false);
+            }
+        }
+
+        // Le Core et les tentacules n'ont potentiellement pas le même script alors 
+        // on lance une coroutine globale qui va chercher tous les renderers pour les dissoudre
+        StartCoroutine(DeathDissolveRoutine());
     }
+
+    private IEnumerator DeathDissolveRoutine()
+    {
+        float dissolveDuration = 1.0f; // Durée totale de la mort
+        float t = 0f;
+
+        // On cherche tous les renderers restants (Core, Tentacules...)
+        Renderer[] allRenderers = GetComponentsInChildren<Renderer>(true);
+        List<Material> matsToDissolve = new List<Material>();
+
+        foreach (var r in allRenderers)
+        {
+            if (r != null && r.material != null)
+            {
+                // Un peu lourd, mais on clone le mat pour ne pas altérer le mat original du projet
+                r.material = new Material(r.material);
+                matsToDissolve.Add(r.material);
+            }
+        }
+
+        while (t < dissolveDuration)
+        {
+            t += Time.deltaTime;
+            float v = Mathf.Lerp(0f, 1f, t / dissolveDuration);
+
+            foreach (var mat in matsToDissolve)
+            {
+                if (mat != null)
+                    mat.SetFloat("_DissolveAmount", v);
+            }
+
+            yield return null;
+        }
+
+        // Mort définitive
+        Destroy(gameObject);
+    }
+
 
     // ----------------------------------------------------------------------
     //  BODY CONNECTIVITY / LIMB CUT
     // ----------------------------------------------------------------------
     public void OnExternalSphereDestroyed(ExternalSphere sphere)
     {
+        if (isDead) return;
         CheckConnectivity();
     }
 
@@ -104,7 +173,6 @@ public class EnemiesGauna : MonoBehaviour
         }
 
         // ---------- SAFE SPHERE DESTRUCTION ----------
-        // Collect first, destroy after, so we don't modify the list while iterating it.
         List<ExternalSphere> toDestroy = new List<ExternalSphere>();
 
         foreach (var sphere in externalSpheres)
@@ -116,8 +184,6 @@ public class EnemiesGauna : MonoBehaviour
 
         foreach (var sphere in toDestroy)
         {
-            // This calls back into OnExternalSphereDestroyed → CheckConnectivity,
-            // but now we're not inside a foreach over externalSpheres anymore, so it's safe.
             sphere.DestroySphere();
         }
 
@@ -153,12 +219,10 @@ public class EnemiesGauna : MonoBehaviour
 
             if (!foundConnection)
             {
-                // segment is amputated, mark it to be killed
                 segsToKill.Add(seg);
             }
         }
 
-        // Actually kill them AFTER the iteration
         foreach (var seg in segsToKill)
         {
             if (seg != null)
@@ -182,14 +246,13 @@ public class EnemiesGauna : MonoBehaviour
 
     public void StartRegeneration()
     {
-        if (!autoRegenerate) return;
+        if (!autoRegenerate || isDead) return;
         if (regenRoutine != null) StopCoroutine(regenRoutine);
         regenRoutine = StartCoroutine(RegenerateProcess());
     }
 
     private IEnumerator RegenerateProcess()
     {
-        // wait a bit before starting regen
         yield return new WaitForSeconds(1f);
 
         List<ExternalSphere> destroyed = new List<ExternalSphere>();
@@ -197,7 +260,6 @@ public class EnemiesGauna : MonoBehaviour
             if (s != null && s.IsDestroyed)
                 destroyed.Add(s);
 
-        // nearest to core reappears first
         destroyed.Sort((a, b) =>
             Vector3.Distance(a.transform.position, internalSphere.transform.position)
             .CompareTo(Vector3.Distance(b.transform.position, internalSphere.transform.position)));
@@ -220,11 +282,7 @@ public class EnemiesGauna : MonoBehaviour
             return;
         }
 
-        if (tentacleRoots.Count == 0)
-        {
-            // You could auto-add "exposed" spheres here if you want, for now do nothing.
-            return;
-        }
+        if (tentacleRoots.Count == 0) return;
 
         foreach (var rootSphere in tentacleRoots)
         {
@@ -250,7 +308,6 @@ public class EnemiesGauna : MonoBehaviour
         tr.engageDistance = tentacleEngageDistance;
         tr.disengageDistance = tentacleDisengageDistance;
 
-        // build initial chain
         tr.segments = new List<Transform>();
         for (int i = 0; i < initialTentacleSegments; i++)
         {
